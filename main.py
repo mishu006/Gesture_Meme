@@ -3,6 +3,45 @@ import mediapipe as mp
 import math
 import numpy as np
 from collections import deque, Counter
+import os
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+# Deterministic mapping: each gesture ALWAYS shows the same meme. Where a meme
+# has an iconic pose, the gesture matches it (both hands up = ABSOLUTE CINEMA,
+# pointing = "is this a pigeon", finger on lips = shush, etc.).
+
+# Face / two-hand gestures -> meme file
+GESTURE_MEME = {
+    "hands_up":   "absolute_cinema.jpg",   # both hands raised up   -> ABSOLUTE CINEMA
+    "hands_face": "cara.jpeg",             # two open palms beside the face
+    "shh":        "cristiano.png",         # a finger on the mouth
+    "tongue":     "gato1.png",             # tongue out
+    "eyebrows":   "perro.jpeg",            # raised / furrowed eyebrows
+}
+
+# Single-hand finger shapes [thumb, index, middle, ring, pinky] -> meme file
+HAND_MEME = {
+    (0, 1, 1, 0, 0): "rata.jpeg",                 # peace / victory   (index+middle)
+    (1, 0, 0, 0, 0): "drake_hotline_bling.jpg",   # thumbs up
+    (0, 1, 0, 0, 0): "is_this_a_pigeon.jpg",      # pointing (index only)
+    (0, 0, 0, 0, 0): "buff_doge_vs_cheems.png",   # fist
+    (1, 1, 1, 1, 1): "epic_handshake.jpg",        # open palm (all five)
+    (0, 1, 1, 1, 0): "expanding_brain.jpg",       # three fingers
+    (0, 1, 1, 1, 1): "change_my_mind.jpg",        # four fingers
+    (0, 1, 0, 0, 1): "disaster_girl.jpg",         # rock horns (index+pinky)
+    (1, 0, 0, 0, 1): "this_is_fine.jpg",          # shaka / call me (thumb+pinky)
+    (1, 1, 0, 0, 0): "two_buttons.jpg",           # L / finger-gun (thumb+index)
+    (0, 0, 0, 0, 1): "grumpy_cat.jpg",            # pinky only
+    (1, 1, 1, 0, 0): "trade_offer.jpg",           # thumb+index+middle
+}
+
+# Drop any mapping whose image file is missing, so a gesture never shows a
+# broken meme.
+GESTURE_MEME = {g: f for g, f in GESTURE_MEME.items()
+                if os.path.exists(os.path.join(HERE, f))}
+HAND_MEME = {k: f for k, f in HAND_MEME.items()
+             if os.path.exists(os.path.join(HERE, f))}
 
 mp_face  = mp.solutions.face_mesh
 mp_hands = mp.solutions.hands
@@ -203,6 +242,24 @@ def hud(frame, img_actual, manos_info, W, H):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (160, 160, 160), 1, cv2.LINE_AA)
 
 
+def draw_button(frame, rect, label, hot=False):
+    x1, y1, x2, y2 = rect
+    ov = frame.copy()
+    cv2.rectangle(ov, (x1, y1), (x2, y2), (40, 40, 40), -1)
+    cv2.addWeighted(ov, 0.6, frame, 0.4, 0, frame)
+    border = (80, 240, 80) if hot else (120, 120, 120)
+    cv2.rectangle(frame, (x1, y1), (x2, y2), border, 1, cv2.LINE_AA)
+    cv2.putText(frame, label, (x1 + 12, y2 - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (220, 220, 220), 1, cv2.LINE_AA)
+
+
+def on_mouse(event, x, y, flags, param):
+    if event == cv2.EVENT_LBUTTONDOWN:
+        x1, y1, x2, y2 = param["btn"]
+        if x1 <= x <= x2 and y1 <= y <= y2:
+            param["recalibrate"] = True
+
+
 def main():
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
     if not cap.isOpened():
@@ -234,10 +291,14 @@ def main():
     cv2.imshow("Meme Detectado", fondo)
     cv2.waitKey(1)
 
-    cal        = Cal()
-    buf        = deque(maxlen=10)
-    img_actual = None
-    MINVOTOS   = 6
+    cal          = Cal()
+    buf          = deque(maxlen=10)
+    img_actual   = None
+    MINVOTOS     = 6
+    btn_w, btn_h = 150, 32
+    ui           = {"recalibrate": False,
+                    "btn": (W - btn_w - 10, 10, W - 10, 10 + btn_h)}
+    cv2.setMouseCallback("Tu Camara", on_mouse, ui)
 
     while True:
         ret, frame = cap.read()
@@ -293,19 +354,18 @@ def main():
                 manos_info.append(("I" if izq else "D", ded))
 
         if lm_cara and len(manos) == 2 and det_sonic(manos, lm_cara):
-            det = "Sonic.jpeg"
+            det = GESTURE_MEME.get("hands_up")
         elif len(manos) == 2 and det_cara(manos):
-            det = "cara.jpeg"
+            det = GESTURE_MEME.get("hands_face")
         elif lm_cara and manos and det_cristiano(manos, lm_cara):
-            det = "cristiano.png"
+            det = GESTURE_MEME.get("shh")
         elif lm_cara and det_lengua(lm_cara, cal):
-            det = "gato1.png"
+            det = GESTURE_MEME.get("tongue")
         elif lm_cara and det_ceja(lm_cara, cal):
-            det = "perro.jpeg"
+            det = GESTURE_MEME.get("eyebrows")
         elif len(manos) == 1:
             ded_m, lm_m = manos[0]
-            if det_rata(ded_m):
-                det = "rata.jpeg"
+            det = HAND_MEME.get(tuple(ded_m))
 
         buf.append(det)
         conteo     = Counter(buf)
@@ -314,10 +374,12 @@ def main():
             img_actual = top
 
         hud(frame, img_actual, manos_info, W, H)
+        ui["btn"] = (W - btn_w - 10, 10, W - 10, 10 + btn_h)
+        draw_button(frame, ui["btn"], "RECALIBRATE", hot=ui["recalibrate"])
         cv2.imshow("Tu Camara", frame)
 
         if img_actual:
-            meme = cv2.imread(img_actual)
+            meme = cv2.imread(os.path.join(HERE, img_actual))
             if meme is not None and meme.size > 0:
                 cv2.imshow("Meme Detectado", cv2.resize(meme, (W, H)))
             else:
@@ -328,8 +390,14 @@ def main():
         else:
             cv2.imshow("Meme Detectado", fondo)
 
-        if cv2.waitKey(1) & 0xFF == 27:
+        key = cv2.waitKey(1) & 0xFF
+        if key == 27:
             break
+        if key in (ord('r'), ord('R')) or ui["recalibrate"]:
+            ui["recalibrate"] = False
+            cal        = Cal()
+            buf.clear()
+            img_actual = None
 
     cap.release()
     cv2.destroyAllWindows()
