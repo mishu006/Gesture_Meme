@@ -1,3 +1,4 @@
+import os
 import platform
 import cv2
 import mediapipe as mp
@@ -14,6 +15,11 @@ face_mesh = mp_face.FaceMesh(
 hands_det = mp_hands.Hands(
     max_num_hands=2,
     min_detection_confidence=0.7, min_tracking_confidence=0.7)
+
+glasses_cascade = cv2.CascadeClassifier(
+    cv2.data.haarcascades + "haarcascade_eye_tree_eyeglasses.xml")
+
+HAMSTER_DIR = "assets/hamster"
 
 def d(a, b):
     return math.sqrt((a.x-b.x)**2+(a.y-b.y)**2+(a.z-b.z)**2)
@@ -36,13 +42,15 @@ class Cal:
     N = 45
 
     def __init__(self):
-        self.buf = {k: [] for k in ['ci','cd','cen','lap','llb','bi_y','bd_y','gap']}
+        self.buf = {k: [] for k in ['ci','cd','cen','lap','llb','bi_y','bd_y','gap',
+                                      'boca_ancho','com_izq_y','com_der_y']}
         self.done = False
         self.thr = dict(
             ci=0.180, cd=0.180, cen_lo=0.185,
             lap=0.055, llb=0.145,
             bi_y_lo=0.30, bd_y_lo=0.30,
-            gap_lo=0.10
+            gap_lo=0.10,
+            boca_ancho_lo=0.22, com_izq_y_hi=0.50, com_der_y_hi=0.50,
         )
 
     def feed(self, lm):
@@ -57,6 +65,9 @@ class Cal:
         self.buf['bi_y'].append(lm[55].y - lm[9].y)
         self.buf['bd_y'].append(lm[285].y - lm[9].y)
         self.buf['gap'].append(abs(lm[55].x - lm[285].x))
+        self.buf['boca_ancho'].append(d(lm[61], lm[291]) / e)
+        self.buf['com_izq_y'].append(lm[61].y)
+        self.buf['com_der_y'].append(lm[291].y)
         if len(self.buf['ci']) >= self.N:
             self._calc()
 
@@ -72,7 +83,10 @@ class Cal:
         self.thr['llb']     = m('llb') - mg_b('llb', 0.018)
         self.thr['bi_y_lo'] = m('bi_y') + mg_c('bi_y')
         self.thr['bd_y_lo'] = m('bd_y') + mg_c('bd_y')
-        self.thr['gap_lo']  = m('gap')  - mg_c('gap')
+        self.thr['gap_lo']       = m('gap')        - mg_c('gap')
+        self.thr['boca_ancho_lo'] = m('boca_ancho') + mg_c('boca_ancho')
+        self.thr['com_izq_y_hi']  = m('com_izq_y')  - mg_c('com_izq_y')
+        self.thr['com_der_y_hi']  = m('com_der_y')  - mg_c('com_der_y')
         self.done = True
 
     @property
@@ -80,51 +94,57 @@ class Cal:
         return min(len(self.buf['ci']) / self.N, 1.0)
 
 
-def det_lengua(lm, cal):
+def det_sonrisa(lm, cal):
+    if not cal.done:
+        return False
     e = esc(lm)
-    boca_abierta = d(lm[13], lm[14]) / e > cal.thr['lap']
-    lengua_baja  = d(lm[17], lm[152]) / e < cal.thr['llb']
-    punta_fuera  = lm[17].y > lm[14].y + 0.012
-    return boca_abierta and lengua_baja and punta_fuera
+    return d(lm[61], lm[291]) / e > cal.thr['boca_ancho_lo']
 
-def det_ceja(lm, cal):
-    e    = esc(lm)
-    ci   = d(lm[52],  lm[159]) / e
-    cd   = d(lm[282], lm[386]) / e
-    cen  = d(lm[55],  lm[285]) / e
-    bi_y = lm[55].y  - lm[9].y
-    bd_y = lm[285].y - lm[9].y
-    gap  = abs(lm[55].x - lm[285].x)
-    return (
-        ci   > cal.thr['ci']      or
-        cd   > cal.thr['cd']      or
-        cen  < cal.thr['cen_lo']  or
-        bi_y > cal.thr['bi_y_lo'] or
-        bd_y > cal.thr['bd_y_lo'] or
-        gap  < cal.thr['gap_lo']
-    )
+def det_lentes(frame_gray):
+    lentes = glasses_cascade.detectMultiScale(
+        frame_gray, scaleFactor=1.1, minNeighbors=5, minSize=(40, 40))
+    return len(lentes) > 0
 
-def det_cristiano(manos, lm_cara):
-    boca = lm_cara[13]
-    return any(d(lm[8], boca) < 0.09 or d(lm[12], boca) < 0.09
-               for _, lm in manos)
+def det_fairy(lm_cara, manos, cal):
+    if not lm_cara or len(manos) != 1:
+        return False
+    _, lm_mano = manos[0]
+    return det_sonrisa(lm_cara, cal) and lm_mano[0].y < 0.45
 
-def det_rata(ded):
+def det_nerd(ded_m, frame_gray):
+    return ded_m == [0, 1, 0, 0, 0] and det_lentes(frame_gray)
+
+def det_fist_on_nose(ded_m, lm_mano, lm_cara):
+    if any(ded_m[1:4]):
+        return False
+    e = esc(lm_cara)
+    return d(lm_mano[9], lm_cara[168]) / e < 0.20
+
+def det_head_scratching(lm_mano, lm_cara):
+    ojo_y = min(lm_cara[159].y, lm_cara[386].y)
+    if lm_mano[9].y >= ojo_y:
+        return False
+    return abs(lm_mano[9].x - lm_cara[1].x) < 0.25
+
+def det_silence(ded_m, lm_mano, lm_cara):
+    if ded_m[1] != 1 or any(ded_m[2:]):
+        return False
+    boca_x = (lm_cara[13].x + lm_cara[14].x) / 2
+    boca_y = (lm_cara[13].y + lm_cara[14].y) / 2
+    dist = math.sqrt((lm_mano[8].x - boca_x)**2 + (lm_mano[8].y - boca_y)**2)
+    return dist < 0.12
+
+def det_laugh(lm, cal):
+    if not cal.done:
+        return False
+    e = esc(lm)
+    return d(lm[13], lm[14]) / e > cal.thr['lap'] * 1.5
+
+def det_like(ded):
+    return ded == [1, 0, 0, 0, 0]
+
+def det_peace(ded):
     return ded == [0, 1, 1, 0, 0]
-
-def det_sonic(manos, lm_cara):
-    if len(manos) != 2:
-        return False
-    nariz_y = lm_cara[1].y
-    return all(lm[9].y < nariz_y for _, lm in manos)
-
-def det_cara(manos):
-    if len(manos) != 2:
-        return False
-    for ded, lm in manos:
-        if ded[1:] != [1, 1, 1, 1] or lm[0].y < 0.50:
-            return False
-    return abs(manos[0][1][0].x - manos[1][1][0].x) >= 0.20
 
 
 FACE_OVAL = [10,338,297,332,284,251,389,356,454,323,361,288,
@@ -230,10 +250,10 @@ def main():
     H, W   = frame0.shape[:2]
     fondo  = np.full((H, W, 3), 30, dtype=np.uint8)
 
-    cv2.namedWindow("Tu Camara",      cv2.WINDOW_AUTOSIZE)
-    cv2.namedWindow("Meme Detectado", cv2.WINDOW_AUTOSIZE)
-    cv2.imshow("Tu Camara",      frame0)
-    cv2.imshow("Meme Detectado", fondo)
+    cv2.namedWindow("Hamster Vision",  cv2.WINDOW_AUTOSIZE)
+    cv2.namedWindow("Meme Hamster",    cv2.WINDOW_AUTOSIZE)
+    cv2.imshow("Hamster Vision",      frame0)
+    cv2.imshow("Meme Hamster", fondo)
     cv2.waitKey(1)
 
     cal        = Cal()
@@ -249,6 +269,7 @@ def main():
         frame = cv2.flip(frame, 1)
         H, W  = frame.shape[:2]
         rgb   = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         fr    = face_mesh.process(rgb)
         hr    = hands_det.process(rgb)
 
@@ -276,8 +297,8 @@ def main():
                         0.65, (160, 160, 160), 1, cv2.LINE_AA)
             if fr.multi_face_landmarks:
                 cal.feed(fr.multi_face_landmarks[0].landmark)
-            cv2.imshow("Tu Camara",      frame)
-            cv2.imshow("Meme Detectado", fondo)
+            cv2.imshow("Hamster Vision",      frame)
+            cv2.imshow("Meme Hamster", fondo)
             if cv2.waitKey(1) & 0xFF == 27:
                 break
             continue
@@ -294,20 +315,26 @@ def main():
                 manos.append((ded, lm))
                 manos_info.append(("I" if izq else "D", ded))
 
-        if lm_cara and len(manos) == 2 and det_sonic(manos, lm_cara):
-            det = "Sonic.jpeg"
-        elif len(manos) == 2 and det_cara(manos):
-            det = "cara.jpeg"
-        elif lm_cara and manos and det_cristiano(manos, lm_cara):
-            det = "cristiano.png"
-        elif lm_cara and det_lengua(lm_cara, cal):
-            det = "gato1.png"
-        elif lm_cara and det_ceja(lm_cara, cal):
-            det = "perro.jpeg"
+        det = None
+
+        if lm_cara and len(manos) == 1 and det_fairy(lm_cara, manos, cal):
+            det = "fairy.jpeg"
         elif len(manos) == 1:
             ded_m, lm_m = manos[0]
-            if det_rata(ded_m):
-                det = "rata.jpeg"
+            if det_nerd(ded_m, frame_gray):
+                det = "finger-glasses-nerd.jpeg"
+            elif lm_cara and det_fist_on_nose(ded_m, lm_m, lm_cara):
+                det = "fist-on-nose.jpeg"
+            elif lm_cara and det_head_scratching(lm_m, lm_cara):
+                det = "head-scratching.jpeg"
+            elif lm_cara and det_silence(ded_m, lm_m, lm_cara):
+                det = "silence.jpeg"
+            elif det_like(ded_m):
+                det = "like.jpeg"
+            elif det_peace(ded_m):
+                det = "peace and love .jpeg"
+        elif lm_cara and det_laugh(lm_cara, cal):
+            det = "laugh.jpeg"
 
         buf.append(det)
         conteo     = Counter(buf)
@@ -316,19 +343,20 @@ def main():
             img_actual = top
 
         hud(frame, img_actual, manos_info, W, H)
-        cv2.imshow("Tu Camara", frame)
+        cv2.imshow("Hamster Vision", frame)
 
         if img_actual:
-            meme = cv2.imread(img_actual)
+            ruta = os.path.join(HAMSTER_DIR, img_actual)
+            meme = cv2.imread(ruta)
             if meme is not None and meme.size > 0:
-                cv2.imshow("Meme Detectado", cv2.resize(meme, (W, H)))
+                cv2.imshow("Meme Hamster", cv2.resize(meme, (W, H)))
             else:
                 err = fondo.copy()
-                cv2.putText(err, f"Falta: {img_actual}", (20, H // 2),
+                cv2.putText(err, f"Falta: {ruta}", (20, H // 2),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (80, 80, 220), 2)
-                cv2.imshow("Meme Detectado", err)
+                cv2.imshow("Meme Hamster", err)
         else:
-            cv2.imshow("Meme Detectado", fondo)
+            cv2.imshow("Meme Hamster", fondo)
 
         if cv2.waitKey(1) & 0xFF == 27:
             break

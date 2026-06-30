@@ -62,4 +62,4 @@ O si tienes el archivo de requisitos:
 - La **calibración** toma unos segundos al inicio, es necesaria para que los gestos funcionen correctamente
 - Las imágenes deben estar en la **misma carpeta** que `main.py`
 - Funciona mejor con **buena iluminación**
-- Compatible con **Windows** (usa `CAP_DSHOW` para la cámara)
+- Compatible con **Windows** y **Linux** (usa `CAP_DSHOW` en Windows, `CAP_ANY` en Linux)
