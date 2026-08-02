@@ -1,18 +1,47 @@
 import cv2
 import mediapipe as mp
+from mediapipe.tasks import python as mp_python
+from mediapipe.tasks.python import vision as mp_vision
 import math
 import numpy as np
 from collections import deque, Counter
+import os
+import urllib.request
 
-mp_face  = mp.solutions.face_mesh
-mp_hands = mp.solutions.hands
+# ── Model auto-download ──────────────────────────────────────────────
+_DIR = os.path.dirname(os.path.abspath(__file__))
+_FACE_MODEL = os.path.join(_DIR, "face_landmarker.task")
+_HAND_MODEL = os.path.join(_DIR, "hand_landmarker.task")
 
-face_mesh = mp_face.FaceMesh(
-    max_num_faces=1, refine_landmarks=True,
-    min_detection_confidence=0.7, min_tracking_confidence=0.7)
-hands_det = mp_hands.Hands(
-    max_num_hands=2,
-    min_detection_confidence=0.7, min_tracking_confidence=0.7)
+_MODELS = {
+    _FACE_MODEL: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task",
+    _HAND_MODEL: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
+}
+
+for _path, _url in _MODELS.items():
+    if not os.path.exists(_path):
+        print(f"Descargando {os.path.basename(_path)} ...")
+        urllib.request.urlretrieve(_url, _path)
+        print("  OK")
+
+# ── Detectors (Tasks API) ────────────────────────────────────────────
+face_landmarker = mp_vision.FaceLandmarker.create_from_options(
+    mp_vision.FaceLandmarkerOptions(
+        base_options=mp_python.BaseOptions(model_asset_path=_FACE_MODEL),
+        running_mode=mp_vision.RunningMode.VIDEO,
+        num_faces=1,
+        min_face_detection_confidence=0.7,
+        min_face_presence_confidence=0.7,
+        min_tracking_confidence=0.7))
+
+hand_landmarker = mp_vision.HandLandmarker.create_from_options(
+    mp_vision.HandLandmarkerOptions(
+        base_options=mp_python.BaseOptions(model_asset_path=_HAND_MODEL),
+        running_mode=mp_vision.RunningMode.VIDEO,
+        num_hands=2,
+        min_hand_detection_confidence=0.7,
+        min_hand_presence_confidence=0.7,
+        min_tracking_confidence=0.7))
 
 def d(a, b):
     return math.sqrt((a.x-b.x)**2+(a.y-b.y)**2+(a.z-b.z)**2)
@@ -238,6 +267,7 @@ def main():
     buf        = deque(maxlen=10)
     img_actual = None
     MINVOTOS   = 6
+    frame_ts   = 0
 
     while True:
         ret, frame = cap.read()
@@ -247,8 +277,10 @@ def main():
         frame = cv2.flip(frame, 1)
         H, W  = frame.shape[:2]
         rgb   = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        fr    = face_mesh.process(rgb)
-        hr    = hands_det.process(rgb)
+        mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        frame_ts += 1
+        fr    = face_landmarker.detect_for_video(mp_img, frame_ts)
+        hr    = hand_landmarker.detect_for_video(mp_img, frame_ts)
 
         det        = None
         lm_cara    = None
@@ -272,21 +304,21 @@ def main():
             cv2.putText(frame, f"{int(pct * 100)}%",
                         (W // 2 - 18, cy + 48), cv2.FONT_HERSHEY_SIMPLEX,
                         0.65, (160, 160, 160), 1, cv2.LINE_AA)
-            if fr.multi_face_landmarks:
-                cal.feed(fr.multi_face_landmarks[0].landmark)
+            if fr.face_landmarks:
+                cal.feed(fr.face_landmarks[0])
             cv2.imshow("Tu Camara",      frame)
             cv2.imshow("Meme Detectado", fondo)
             if cv2.waitKey(1) & 0xFF == 27:
                 break
             continue
 
-        if fr.multi_face_landmarks:
-            lm_cara = fr.multi_face_landmarks[0].landmark
+        if fr.face_landmarks:
+            lm_cara = fr.face_landmarks[0]
 
-        if hr.multi_hand_landmarks:
-            for i, hl in enumerate(hr.multi_hand_landmarks):
-                lm  = hl.landmark
-                izq = hr.multi_handedness[i].classification[0].label == "Left"
+        if hr.hand_landmarks:
+            for i, hl in enumerate(hr.hand_landmarks):
+                lm  = hl
+                izq = hr.handedness[i][0].category_name == "Left"
                 ded = dedos_estado(lm, izq)
                 draw_hand_minimal(frame, lm, W, H, ded)
                 manos.append((ded, lm))
@@ -333,6 +365,8 @@ def main():
 
     cap.release()
     cv2.destroyAllWindows()
+    face_landmarker.close()
+    hand_landmarker.close()
 
 
 if __name__ == "__main__":
