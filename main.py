@@ -1,3 +1,4 @@
+import platform
 import cv2
 import mediapipe as mp
 import math
@@ -204,9 +205,20 @@ def hud(frame, img_actual, manos_info, W, H):
 
 
 def main():
-    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+    # --- macOS compatibility: pick the correct capture backend per platform ---
+    # cv2.CAP_DSHOW (DirectShow) is Windows-only and will fail to open the
+    # camera correctly on macOS. AVFoundation is the native macOS backend.
+    sistema = platform.system()
+    if sistema == "Darwin":
+        backend = cv2.CAP_AVFOUNDATION
+    elif sistema == "Windows":
+        backend = cv2.CAP_DSHOW
+    else:
+        backend = cv2.CAP_ANY
+
+    cap = cv2.VideoCapture(0, backend)
     if not cap.isOpened():
-        cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
+        cap = cv2.VideoCapture(1, backend)
     if not cap.isOpened():
         print("Error: no se pudo abrir la camara")
         return
@@ -333,6 +345,7 @@ def main():
 
     cap.release()
     cv2.destroyAllWindows()
+    cv2.waitKey(1)
 
 
 if __name__ == "__main__":
