@@ -1,38 +1,64 @@
 # Gesture Meme
 
-Proyecto de visión por computadora que detecta gestos faciales y de manos en tiempo real usando la cámara web y muestra un meme correspondiente.
+A computer vision project that detects facial and hand gestures in real time using your webcam and displays a corresponding meme.
 
-## Tecnologías
+## Technologies
 
 - **Python 3.10.0**
 - **OpenCV**
 - **MediaPipe**
 - **NumPy**
 
-## Requisitos
+## Requirements
 
-- **Python 3.8 - 3.11** (MediaPipe no es compatible con versiones superiores)
+- **Python 3.8 - 3.11** (MediaPipe does not support newer versions)
 
-Instala las dependencias con:
+### 1. Create and activate a virtual environment
+
+It's recommended to install dependencies inside a virtual environment to keep your project isolated from your global Python installation.
+
+**Create the virtual environment** (run once, from the project folder):
+
+    python3 -m venv venv
+
+**Activate it:**
+
+- **macOS / Linux:**
+
+      source venv/bin/activate
+
+- **Windows (Command Prompt):**
+
+      venv\Scripts\activate.bat
+
+- **Windows (PowerShell):**
+
+      venv\Scripts\Activate.ps1
+
+Once activated, your terminal prompt should show `(venv)` at the beginning of the line. To deactivate it later, simply run `deactivate`.
+
+### 2. Install dependencies
+
+With the virtual environment active, install the dependencies:
 
     pip install opencv-python mediapipe numpy
 
-O si tienes el archivo de requisitos:
+Or, if you have the requirements file:
 
     pip install -r requirements.txt
 
-## Gestos detectados
+## Detected gestures
 
-| Gesto | Meme |
+| Gesture | Meme |
 |-------|------|
-| **Cejas levantadas o fruncidas** | `perro.jpeg` |
-| **Lengua afuera** | `gato1.png` |
-| **Dedo tocando la boca** | `cristiano.png` |
-| **Dos manos a los lados de la cara** | `cara.jpeg` |
-| **Dos manos por encima de la nariz** | `Sonic.jpeg` |
-| **Índice y medio extendidos** | `rata.jpeg` |
+| **Raised or furrowed eyebrows** | `perro.jpeg` |
+| **Tongue out** | `gato1.png` |
+| **Finger touching the mouth** | `cristiano.png` |
+| **Two hands on either side of the face** | `cara.jpeg` |
+| **Two hands above the nose** | `Sonic.jpeg` |
+| **Index and middle fingers extended** | `rata.jpeg` |
 
-## Estructura del proyecto
+## Project structure
 
     gesture_meme/
     ├── main.py
@@ -44,22 +70,23 @@ O si tienes el archivo de requisitos:
     ├── rata.jpeg
     └── Sonic.jpeg
 
-## Uso
+## Usage
 
-1. Clona el repositorio
-2. Instala las dependencias
-3. Coloca las imágenes en la misma carpeta que `main.py`
-4. Ejecuta:
+1. Clone the repository
+2. Create and activate a virtual environment (see above)
+3. Install the dependencies
+4. Place the images in the same folder as `main.py`
+5. Run:
 
        python main.py
 
-5. Al iniciar, mira al frente con cara neutral durante la **calibración**
-6. Una vez calibrado, prueba los gestos frente a la cámara
-7. Presiona **ESC** para salir
+6. When it starts, look straight ahead with a neutral face during **calibration**
+7. Once calibrated, try the gestures in front of the camera
+8. Press **ESC** to exit
 
-## Notas
+## Notes
 
-- La **calibración** toma unos segundos al inicio, es necesaria para que los gestos funcionen correctamente
-- Las imágenes deben estar en la **misma carpeta** que `main.py`
-- Funciona mejor con **buena iluminación**
-- Compatible con **Windows** (usa `CAP_DSHOW` para la cámara)
+- **Calibration** takes a few seconds at startup and is necessary for the gestures to work correctly
+- The images must be in the **same folder** as `main.py`
+- Works best with **good lighting**
+- Cross-platform compatible: automatically selects the appropriate camera backend for **Windows**, **macOS**, and **Linux**
